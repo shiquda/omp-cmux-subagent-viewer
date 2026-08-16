@@ -89,6 +89,8 @@ class SplitRunner {
   surfaceCounter = 100;
   paneCounter = 10;
   callerSurface = "surface:0";
+  /** pane ref currently focused in the fake tree (focus-pane sets it). */
+  focusedPaneRef = "pane:0";
 
   async exec(argv: string[]): Promise<CommandResult> {
     this.calls.push(argv);
@@ -101,6 +103,10 @@ class SplitRunner {
         }),
         stderr: "",
       };
+    }
+    if (cmd === "focus-pane") {
+      this.focusedPaneRef = argv[argv.indexOf("--pane") + 1];
+      return { code: 0, stdout: "OK\n", stderr: "" };
     }
     if (cmd === "new-split") {
       this.surfaceCounter += 1;
@@ -121,7 +127,12 @@ class SplitRunner {
       return { code: 0, stdout: `OK ${surface} workspace:8\n`, stderr: "" };
     }
     if (cmd === "list-panes") {
-      return { code: 0, stdout: this.panes.map((p) => `${p}  [1 surface]`).join("\n"), stderr: "" };
+      const all = ["pane:0", ...this.panes];
+      return {
+        code: 0,
+        stdout: all.map((p) => `${p}  [1 surface]${p === this.focusedPaneRef ? "  [focused]" : ""}`).join("\n"),
+        stderr: "",
+      };
     }
     if (cmd === "list-pane-surfaces") {
       const pane = argv[argv.indexOf("--pane") + 1];
@@ -134,6 +145,13 @@ class SplitRunner {
     if (cmd === "close-surface") {
       const target = argv[argv.indexOf("--surface") + 1];
       this.surfaces = this.surfaces.filter((s) => s !== target);
+      // Emulate cmux focus stealing on close: closing an agent surface moves
+      // focus to a neighboring agent pane (observed on real cmux even when the
+      // caller pane had focus).
+      const closedPane = this.paneOf.get(target);
+      this.paneOf.delete(target);
+      const remaining = this.panes.filter((p) => p !== closedPane);
+      if (remaining.length > 0) this.focusedPaneRef = remaining[remaining.length - 1];
       return { code: 0, stdout: "OK\n", stderr: "" };
     }
     return { code: 0, stdout: "", stderr: "" };
@@ -292,6 +310,38 @@ describe("CmuxLayout split-pane close/forget", () => {
     expect(await layout.closeSurfaceFor("A")).toBe(false);
     expect(await layout.closeSurfaceFor("Ghost")).toBe(false);
     expect(runner.closeSurfaceCalls().length).toBe(1);
+  });
+
+  test("closeSurfaceFor restores focus to the caller pane when cmux stole it", async () => {
+    const runner = new SplitRunner();
+    const layout = makeSplitLayout(runner);
+    await layout.ensureSurface(makeView("A"));
+    await layout.ensureSurface(makeView("B"));
+    // caller pane is pane:0 (identify); user focus starts there.
+    expect(runner.focusedPaneRef).toBe("pane:0");
+    expect(layout.state.callerPane).toBe("pane:0");
+
+    // Auto-close B: the fake cmux steals focus to a neighboring agent pane.
+    expect(await layout.closeSurfaceFor("B")).toBe(true);
+    // Layout must have handed focus back to the caller pane.
+    expect(runner.focusedPaneRef).toBe("pane:0");
+    const focusCalls = runner.calls.filter((c) => c[1] === "focus-pane");
+    expect(focusCalls.length).toBe(1);
+    expect(focusCalls[0][focusCalls[0].indexOf("--pane") + 1]).toBe("pane:0");
+  });
+
+  test("closeSurfaceFor leaves focus alone when the user focused an agent pane", async () => {
+    const runner = new SplitRunner();
+    const layout = makeSplitLayout(runner);
+    await layout.ensureSurface(makeView("A"));
+    await layout.ensureSurface(makeView("B"));
+    // User deliberately focused agent A's pane (pane:11) before the close.
+    runner.focusedPaneRef = "pane:11";
+
+    expect(await layout.closeSurfaceFor("B")).toBe(true);
+    // focus-before was not the caller pane → no focus-pane call issued.
+    const focusCalls = runner.calls.filter((c) => c[1] === "focus-pane");
+    expect(focusCalls.length).toBe(0);
   });
 
   test("forgetSurface (user closed) drops the mapping and split", async () => {

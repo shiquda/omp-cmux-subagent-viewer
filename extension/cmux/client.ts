@@ -264,6 +264,26 @@ export class CmuxClient {
     }
   }
 
+  /** Move focus to the given pane (used to restore focus after auto-close). */
+  async focusPane(workspace: string, pane: string): Promise<boolean> {
+    try {
+      await this.run(["focus-pane", "--workspace", workspace, "--pane", pane]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Currently focused pane ref, or null when it cannot be determined. */
+  async focusedPane(workspace: string): Promise<string | null> {
+    try {
+      const panes = await this.listPanes(workspace);
+      return panes.find((p) => p.focused)?.ref ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async ping(): Promise<boolean> {
     try {
       await this.run(["ping"]);

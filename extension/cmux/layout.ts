@@ -28,6 +28,8 @@ export interface LayoutState {
   surfaces: Map<string, string>;
   /** split-pane mode: right-column split surfaces in creation order (R1 first). */
   splitSurfaces: string[];
+  /** The caller (main) pane, remembered so auto-close can restore focus to it. */
+  callerPane?: string;
 }
 
 const HELPER_PANE_TITLE = "subagents";
@@ -141,11 +143,14 @@ export class CmuxLayout {
   private async createSplitPaneSurface(view: AgentView): Promise<string | null> {
     const splits = this.state.splitSurfaces;
     if (splits.length === 0) {
-      const anchor = await this.client
+      const caller = await this.client
         .identify()
-        .then((id) => id?.caller?.surface_ref ?? null)
+        .then((id) => id?.caller ?? null)
         .catch(() => null);
+      const anchor = caller?.surface_ref ?? null;
       if (!anchor) return null; // no caller surface to split from — degrade
+      // Remember the caller pane so auto-close can hand focus back to it.
+      if (caller?.pane_ref) this.state.callerPane = caller.pane_ref;
       const surface = await this.client.newSplit("right", { workspace: this.workspace, surface: anchor });
       if (surface) this.state.splitSurfaces.push(surface);
       return surface;
@@ -188,10 +193,23 @@ export class CmuxLayout {
   async closeSurfaceFor(agentId: string): Promise<boolean> {
     const surface = this.state.surfaces.get(agentId);
     if (!surface) return false;
+    // Snapshot focus before closing: if the user is on the caller (main) pane,
+    // cmux's focus-follows-close may yank it to a neighboring agent pane when
+    // we close. If the user deliberately focused an agent pane, we leave it.
+    const caller = this.state.callerPane;
+    const focusBefore = caller ? await this.client.focusedPane(this.workspace) : null;
     const closed = await this.client.closeSurface(this.workspace, surface);
     if (closed) {
       this.state.surfaces.delete(agentId);
       this.state.splitSurfaces = this.state.splitSurfaces.filter((s) => s !== surface);
+      // Restore focus only when it was on the caller pane before our close and
+      // has since moved elsewhere — i.e. our close stole it. Best-effort.
+      if (caller && focusBefore === caller) {
+        const focusAfter = await this.client.focusedPane(this.workspace);
+        if (focusAfter && focusAfter !== caller) {
+          await this.client.focusPane(this.workspace, caller);
+        }
+      }
     }
     return closed;
   }

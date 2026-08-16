@@ -38,12 +38,9 @@ function renderToolCall(turn: Turn, callIdx: number): string[] {
   const header = `  ${marker} ${BOLD}${call.name}${RESET}${call.args ? ` ${DIM}${call.args}${RESET}` : ""}`;
   lines.push(header);
   if (call.intent) lines.push(`      ${DIM}${call.intent}${RESET}`);
-  if (call.done && call.result) {
-    for (const line of call.result.split("\n").slice(0, 4)) {
-      lines.push(`      ${line}`);
-    }
-    if (call.result.split("\n").length > 4) lines.push(`      ${DIM}…${RESET}`);
-  }
+  // Tool output is intentionally omitted: the viewer shows what the agent is
+  // doing (tool name + args + intent), not the raw tool results. Assistant
+  // text (what the agent says) is rendered separately in renderTurn.
   return lines;
 }
 
