@@ -9,8 +9,10 @@ import type { ExtensionConfig } from "./types";
 
 const DEFAULTS: ExtensionConfig = {
   enabled: true,
-  layout: "helper-pane",
+  layout: "split-pane",
   keepSurface: true,
+  autoClose: true,
+  autoCloseDelayMs: 5000,
   dataDir: join(homedir(), ".local", "state", "omp-cmux-subagents"),
   showDetached: true,
   viewer: {
@@ -19,6 +21,8 @@ const DEFAULTS: ExtensionConfig = {
     maxLineLength: 400,
   },
 };
+
+const LAYOUTS = ["helper-pane", "split", "split-pane"] as const;
 
 function boolFromEnv(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
@@ -33,15 +37,20 @@ function numFromEnv(value: string | undefined, fallback: number): number {
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): ExtensionConfig {
   const layoutRaw = env.OMP_CMUX_SUBAGENTS_LAYOUT;
-  const layout: ExtensionConfig["layout"] = layoutRaw === "split" ? "split" : "helper-pane";
-  if (layoutRaw !== undefined && layoutRaw !== "split" && layoutRaw !== "helper-pane") {
+  const layout: ExtensionConfig["layout"] =
+    layoutRaw === "helper-pane" || layoutRaw === "split" || layoutRaw === "split-pane"
+      ? layoutRaw
+      : DEFAULTS.layout;
+  if (layoutRaw !== undefined && !(LAYOUTS as readonly string[]).includes(layoutRaw)) {
     // eslint-disable-next-line no-console
-    console.warn(`[cmux-subagents] unknown layout "${layoutRaw}" — falling back to "helper-pane"`);
+    console.warn(`[cmux-subagents] unknown layout "${layoutRaw}" — falling back to "${DEFAULTS.layout}"`);
   }
   return {
     enabled: boolFromEnv(env.OMP_CMUX_SUBAGENTS_ENABLED, DEFAULTS.enabled),
     layout,
     keepSurface: boolFromEnv(env.OMP_CMUX_SUBAGENTS_KEEP_SURFACE, DEFAULTS.keepSurface),
+    autoClose: boolFromEnv(env.OMP_CMUX_SUBAGENTS_AUTO_CLOSE, DEFAULTS.autoClose),
+    autoCloseDelayMs: numFromEnv(env.OMP_CMUX_SUBAGENTS_AUTO_CLOSE_DELAY_MS, DEFAULTS.autoCloseDelayMs),
     dataDir: env.OMP_CMUX_SUBAGENTS_DATA_DIR ?? DEFAULTS.dataDir,
     showDetached: boolFromEnv(env.OMP_CMUX_SUBAGENTS_SHOW_DETACHED, DEFAULTS.showDetached),
     viewer: {

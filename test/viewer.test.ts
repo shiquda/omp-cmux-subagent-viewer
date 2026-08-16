@@ -163,6 +163,73 @@ describe("viewer state (turn reconstruction)", () => {
     expect(formatDuration(0, 90_000)).toBe("01:30");
     expect(formatDuration(undefined)).toBe("--:--");
   });
+
+  test("tool_execution_start surfaces a long tool immediately", () => {
+    const state = createViewerState("A", "task");
+    applySessionMessage(state, {
+      role: "toolStart",
+      toolStart: { id: "c1", name: "bash", args: { command: "sleep 10" }, intent: "Long op" },
+    });
+    // The running tool is visible right away, before the assistant message lands.
+    expect(state.currentTool).toBe("bash");
+    expect(state.currentToolArgs).toContain("sleep 10");
+    expect(state.turns[0].toolCalls[0].name).toBe("bash");
+    expect(state.turns[0].toolCalls[0].done).toBe(false);
+  });
+
+  test("assistant toolCall dedupes against earlier tool_execution_start", () => {
+    const state = createViewerState("A", "task");
+    applySessionMessage(state, {
+      role: "toolStart",
+      toolStart: { id: "c1", name: "read", args: { path: "a.ts" } },
+    });
+    // The assistant message carries the same toolCallId — must not duplicate.
+    applySessionMessage(state, {
+      role: "assistant",
+      text: "done",
+      toolCalls: [{ id: "c1", name: "read", args: { path: "a.ts" } }],
+    });
+    const allCalls = state.turns.flatMap((t) => t.toolCalls);
+    expect(allCalls.filter((c) => c.id === "c1").length).toBe(1);
+  });
+
+  test("session-stream projects tool_execution_start custom entries", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-sess-custom-"));
+    const file = join(dir, "A.jsonl");
+    writeFileSync(
+      file,
+      sessionLine({ type: "session", version: 3, id: "s", timestamp: "t", cwd: "/x" }) +
+        sessionLine({
+          type: "custom",
+          customType: "tool_execution_start",
+          id: "c",
+          parentId: null,
+          timestamp: "t",
+          data: { toolCallId: "c1", toolName: "bash", startedAt: "t", args: { command: "x" }, intent: "Run x" },
+        }),
+    );
+    const read = readSessionFileTail(file, 0);
+    expect(read.messages.length).toBe(1);
+    expect(read.messages[0].role).toBe("toolStart");
+    expect(read.messages[0].toolStart?.name).toBe("bash");
+    expect(read.messages[0].toolStart?.id).toBe("c1");
+  });
+
+  test("progress event surfaces the in-flight tool", () => {
+    const state = createViewerState("A", "task");
+    applyEvent(state, {
+      type: "progress",
+      agentId: "A",
+      agentType: "task",
+      currentTool: "bash",
+      currentToolArgs: '{"command":"make"}',
+      durationMs: 5000,
+      timestamp: 1,
+    } as NormalizedSubagentEvent);
+    expect(state.currentTool).toBe("bash");
+    expect(state.currentToolArgs).toContain("make");
+    expect(state.status).toBe("running");
+  });
 });
 
 describe("viewer stream (extension JSONL)", () => {

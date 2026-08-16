@@ -185,6 +185,28 @@ export class CmuxClient {
     }
   }
 
+  /**
+   * Split the given surface (or the caller surface when omitted) in
+   * `direction`. `cmux new-split` creates a new pane with a new surface.
+   * Returns the new surface ref or null.
+   */
+  async newSplit(
+    direction: "left" | "right" | "up" | "down",
+    opts: { workspace: string; surface?: string },
+  ): Promise<string | null> {
+    try {
+      const args = ["new-split", direction, "--workspace", opts.workspace];
+      if (opts.surface) args.push("--surface", opts.surface);
+      args.push("--focus", "false");
+      const { stdout } = await this.run(args);
+      const line = stdout.trim().split("\n").find((l) => l.includes("surface:"));
+      const match = line ? /surface:\d+/.exec(line) : null;
+      return match ? match[0] : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Wait until the surface shell is interactive, then return. */
   async waitForShell(workspace: string, surface: string, timeoutMs = 12_000): Promise<boolean> {
     // Backdrop surfaces render lazily and the login banner can swallow early

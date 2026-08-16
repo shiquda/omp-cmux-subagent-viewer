@@ -85,6 +85,13 @@ function applyLifecycle(state: ViewerState, event: LifecycleEvent): void {
 function applyProgress(state: ViewerState, event: ProgressEvent): void {
   if (state.status === "started") state.status = "running";
   if (event.durationMs !== undefined && event.durationMs > 0) state.durationMs = event.durationMs;
+  // Surface the in-flight tool from the progress stream so a long-running
+  // tool shows up immediately, before its assistant/toolResult messages land
+  // in the session file (which is only tailed on a poll cadence).
+  if (event.currentTool !== undefined) state.currentTool = event.currentTool;
+  if (event.currentToolArgs !== undefined) {
+    state.currentToolArgs = truncate(event.currentToolArgs, MAX_LINE_LENGTH);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +157,30 @@ export function applySessionMessage(state: ViewerState, message: DisplayMessage)
     return;
   }
 
+  // tool_execution_start (custom entry): a tool is running now, ahead of the
+  // assistant message that will carry the same toolCall once the turn lands.
+  // Dedupe by toolCallId — if the call is already in a turn, don't add it
+  // twice; otherwise add a pending entry so long tools are visible.
+  if (message.role === "toolStart" && message.toolStart) {
+    const call = message.toolStart;
+    const already = state.turns.some((t) => t.toolCalls.some((c) => c.id === call.id && call.id !== ""));
+    if (!already) {
+      const turn = currentTurn(state);
+      const entry: ToolCallEntry = {
+        id: call.id,
+        name: call.name,
+        args: argsSummary(call.args),
+        intent: call.intent,
+        done: false,
+      };
+      turn.toolCalls.push(entry);
+      pushTool(state, entry);
+    }
+    state.currentTool = call.name;
+    state.currentToolArgs = argsSummary(call.args);
+    return;
+  }
+
   if (message.role === "assistant") {
     // A new assistant message starts a new turn only when the previous turn
     // already has content; otherwise reuse it (keeps turn boundaries clean).
@@ -162,6 +193,11 @@ export function applySessionMessage(state: ViewerState, message: DisplayMessage)
     if (message.thinking) turn.thinking = truncate(message.thinking, MAX_LINE_LENGTH * 4);
     if (message.text) turn.text = truncate(message.text, MAX_LINE_LENGTH * 4);
     for (const call of message.toolCalls ?? []) {
+      // Skip if this toolCall was already added as a pending entry from an
+      // earlier tool_execution_start (same toolCallId).
+      if (call.id && state.turns.some((t) => t.toolCalls.some((c) => c.id === call.id))) {
+        continue;
+      }
       const entry: ToolCallEntry = {
         id: call.id,
         name: call.name,

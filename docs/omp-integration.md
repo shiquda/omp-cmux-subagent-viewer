@@ -107,6 +107,15 @@ this file changes.
   polling for a prompt character (`➜ ❯ ❮ %`), is the reliable readiness check.
 - `cmux rename-tab --surface S <title>` and `cmux close-surface --surface S`
   behave as documented.
+- `cmux new-split <left|right|up|down> --workspace W --surface S --focus false`
+  prints `OK surface:N workspace:W` and creates a **new pane** holding the
+  new surface. Splitting down from R1 twice yields R1 top / R3 middle / R2
+  bottom (pane tree order = visual order: `cmux tree` lists panes top to
+  bottom).
+- `cmux new-surface --type terminal --pane P --workspace W --working-directory
+  D --focus false` adds another surface to pane P; multiple surfaces in one
+  pane are tabs (`list-pane-surfaces` lists them). Tab surfaces are never
+  tracked as splits — only the first three right-column surfaces are.
 - `workspace:9`-style refs are stable across commands; `identify --json`
   reports `caller.workspace_ref` / `caller.surface_ref` / `caller.pane_ref`.
 
@@ -121,6 +130,9 @@ this file changes.
 | Focus | Every create/rename uses `--focus false`; verified no focus change |
 | Viewer terminal state | Exits after `completed/failed/aborted` render |
 | Surface close | Only forgets the mapping; native agent untouched |
+| Default layout | `split-pane` (env `OMP_CMUX_SUBAGENTS_LAYOUT`): 1st agent splits the right side full-height (R1); 2nd splits down (R2 below R1); 3rd splits down again (R3 lands between R1 and R2); 4th+ agents become tabs inside R1's pane via `new-surface --pane <R1's pane>` (found via `list-panes` + `list-pane-surfaces`). Legacy `helper-pane` / `split` modes retained |
+| Auto-close | Finished agents' surfaces close after `OMP_CMUX_SUBAGENTS_AUTO_CLOSE_DELAY_MS` (default 5000) when `OMP_CMUX_SUBAGENTS_AUTO_CLOSE=true` (default). Timer is `unref()`'d so it never blocks process exit; `closeSurfaceFor` is idempotent — a user-closed surface is skipped. Fail-open |
+| Split bookkeeping | `splitSurfaces` holds the right column in creation order; close/forget remove the surface; a closed split slot is reused by the next agent |
 
 ## 6. Residual risks
 

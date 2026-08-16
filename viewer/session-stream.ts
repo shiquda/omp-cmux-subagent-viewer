@@ -25,6 +25,13 @@ export interface DisplayMessage {
   toolName?: string;
   isError?: boolean;
   timestamp?: number;
+  /**
+   * For a single tool execution projected from a `custom` entry
+   * (tool_execution_start): the running tool call, keyed by toolCallId so the
+   * viewer can dedupe it against the assistant message that carries the same
+   * call once it lands.
+   */
+  toolStart?: DisplayToolCall;
 }
 
 export interface SessionTranscript {
@@ -52,10 +59,32 @@ function textFromContent(content: unknown): string | undefined {
   return parts.length > 0 ? parts.join("\n") : undefined;
 }
 
-/** Convert a single session entry into a display message (null when not a message). */
+/** Convert a single session entry into a display message (null when not displayable). */
 function toDisplayMessage(entry: unknown): DisplayMessage | null {
   const e = asRecord(entry);
-  if (!e || e.type !== "message") return null;
+  if (!e) return null;
+
+  // `custom` entries carry real-time tool signals that precede the assistant
+  // message (which is written once, after the whole turn's blocks are known).
+  // Project tool_execution_start so a long-running tool shows up immediately.
+  if (e.type === "custom") {
+    if (e.customType !== "tool_execution_start") return null;
+    const data = asRecord(e.data);
+    if (!data) return null;
+    const toolName = typeof data.toolName === "string" ? data.toolName : undefined;
+    if (!toolName) return null;
+    return {
+      role: "toolStart",
+      toolStart: {
+        id: typeof data.toolCallId === "string" ? data.toolCallId : "",
+        name: toolName,
+        args: data.args,
+        intent: typeof data.intent === "string" ? data.intent : undefined,
+      },
+    };
+  }
+
+  if (e.type !== "message") return null;
   const m = asRecord(e.message);
   if (!m) return null;
   const role = typeof m.role === "string" ? m.role : "unknown";

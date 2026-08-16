@@ -2,7 +2,7 @@
 
 > Live CMUX surfaces for OMP native subagents — observability, never execution.
 
-Watch [OMP](https://github.com/badlogic/oh-my-pi) native subagents (`task()`) run in real time, in a CMUX helper pane — one terminal surface per agent, without spawning a second agent runtime and without touching task execution.
+Watch [OMP](https://github.com/badlogic/oh-my-pi) native subagents (`task()`) run in real time, projected into CMUX surfaces — right-side splits (or a helper pane with tabs, legacy) — without spawning a second agent runtime and without touching task execution.
 
 ## Why
 
@@ -15,7 +15,7 @@ OMP native task() subagent (in-process AgentSession)
 omp extension (pi.events subscription, in-process)
         │  per-agent JSONL + native session transcript
         ▼
-CMUX helper pane → one terminal surface per subagent → viewer
+CMUX split column / helper pane → one surface per subagent → viewer
 ```
 
 **Hard constraints honored:**
@@ -27,9 +27,16 @@ CMUX helper pane → one terminal surface per subagent → viewer
 
 ## Features
 
-- One **helper pane** on the right; one **surface (tab) per subagent** inside it.
+- **split-pane layout (default)** — right-side split column: 1st subagent
+  takes the full right side, 2nd splits top/bottom, 3rd top/middle/bottom,
+  and every further subagent tabs into the first split's pane. The legacy
+  `helper-pane` (one right helper pane, one surface per subagent) is
+  retained via `OMP_CMUX_SUBAGENTS_LAYOUT=helper-pane`.
 - Live turn-by-turn transcript: task, tool calls (args + intent + result), assistant thinking/text, final result.
 - Status (`● running` / `✓ completed` / `✗ failed` / `■ aborted`), duration, and a static completed view kept open by default.
+- **Auto-close**: finished agents' surfaces close automatically after a
+  configurable delay (default 5 s), keeping the layout tidy without manual
+  cleanup. Disable with `OMP_CMUX_SUBAGENTS_AUTO_CLOSE=false`.
 - Never steals focus (`--focus false` everywhere); closing a surface does **not** cancel the agent.
 - Data source is the subagent's **native session file** (standard OMP session JSONL) — high-fidelity, no custom event dialect in the render path.
 
@@ -61,15 +68,20 @@ task(agent="scout", task="…")
 task(agent="reviewer", task="…")
 ```
 
-The first subagent to start creates the helper pane; each subsequent subagent gets its own surface titled `<agentType> · <agentId>`.
+The first subagent to start splits the right side; each subsequent subagent
+gets its own split (up to 3), then tabs into the first split's pane — each
+surface titled `<agentType> · <agentId>`. When an agent finishes, its
+surface auto-closes after the configured delay (default 5 s).
 
 ### Config (env)
 
 | Var | Default | Meaning |
 | --- | --- | --- |
 | `OMP_CMUX_SUBAGENTS_ENABLED` | `true` | master switch |
-| `OMP_CMUX_SUBAGENTS_LAYOUT` | `helper-pane` | `helper-pane` or `split` (per-agent split fallback) |
-| `OMP_CMUX_SUBAGENTS_KEEP_SURFACE` | `true` | keep completed surfaces open |
+| `OMP_CMUX_SUBAGENTS_LAYOUT` | `split-pane` | `split-pane` (right split column, default), `helper-pane` (one helper pane), or `split` (legacy per-agent fallback) |
+| `OMP_CMUX_SUBAGENTS_KEEP_SURFACE` | `true` | keep completed surfaces open (when auto-close is off) |
+| `OMP_CMUX_SUBAGENTS_AUTO_CLOSE` | `true` | close finished agents' surfaces automatically |
+| `OMP_CMUX_SUBAGENTS_AUTO_CLOSE_DELAY_MS` | `5000` | delay before auto-closing a finished surface |
 | `OMP_CMUX_SUBAGENTS_SHOW_DETACHED` | `true` | visualize background/detached agents |
 | `OMP_CMUX_SUBAGENTS_DATA_DIR` | `~/.local/state/omp-cmux-subagents` | per-session JSONL root |
 | `OMP_CMUX_SUBAGENTS_MAX_EVENTS` | `2000` | viewer history cap |
@@ -80,12 +92,12 @@ The first subagent to start creates the helper pane; each subsequent subagent ge
 
 ```text
 extension/            OMP extension — event source → normalizer → registry → JSONL → cmux
-  cmux/               cmux CLI client, caller context, helper-pane/surface layout
+  cmux/               cmux CLI client, caller context, split-pane/helper-pane layout
   normalizer.ts       OMP payload → stable protocol (extension/types.ts)
   agent-view-registry.ts  per-agent state machine (id-keyed, idempotent, concurrency-safe)
   event-writer.ts     per-agent JSONL (0700 dirs / 0600 files)
   event-source.ts     pi.events subscription — the only OMP-specific seam
-  index.ts            extension entry — wires everything, fail-open
+  index.ts            extension entry — wires everything, fail-open; auto-close scheduler
 viewer/               standalone terminal viewer (no LLM, no OMP, no tools)
   session-stream.ts   read-side projection of the subagent's native session JSONL
   state.ts            bounded turn-structured display state
@@ -111,7 +123,7 @@ bun run scripts/smoke.ts    # real-CMUX smoke: pane → surface → viewer → c
 1. OMP owns subagent creation/execution/lifecycle/context/results; CMUX only presents.
 2. Never launch a second OMP/pi process for subagent work.
 3. Never wrap or replace `task()`; never move subagents into a PTY.
-4. Helper-pane layout by default; one surface per agent (not one split each).
+4. Split-pane layout by default (right column: 1 split, 2, 3, then tabs into the first split); helper-pane retained for the legacy one-surface-per-agent model.
 5. `--focus false` everywhere — never steal focus.
 6. The extension is a projection layer; if the public extension API changes, only `extension/event-source.ts` needs updating (see `docs/omp-integration.md`).
 

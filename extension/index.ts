@@ -29,11 +29,66 @@ import { CmuxLayout } from "./cmux/layout";
 import { AgentViewRegistry } from "./agent-view-registry";
 import { EventWriter } from "./event-writer";
 import type { ExtensionAPI, ExtensionContext } from "./omp-api";
-import type { AgentView, NormalizedSubagentEvent } from "./types";
+import type { AgentView, ExtensionConfig, LifecycleEvent, NormalizedSubagentEvent } from "./types";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(moduleDir, "..");
 const VIEWER_ENTRY = join(repoRoot, "viewer", "index.ts");
+
+const TERMINAL_STATUSES = ["completed", "failed", "aborted"] as const;
+
+/**
+ * Per-agent delayed surface close. Timers are unref'd so a pending auto-close
+ * never keeps the OMP process alive, and every firing is fail-open.
+ */
+export class AutoCloseScheduler {
+  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  schedule(agentId: string, delayMs: number, fn: () => void | Promise<void>): void {
+    this.cancel(agentId);
+    const timer = setTimeout(() => {
+      this.timers.delete(agentId);
+      try {
+        void Promise.resolve(fn());
+      } catch (err) {
+        // fail-open: a close hiccup must never surface into OMP
+        // eslint-disable-next-line no-console
+        console.warn(`[cmux-subagents] auto-close failed for ${agentId}: ${(err as Error).message}`);
+      }
+    }, delayMs);
+    timer.unref?.();
+    this.timers.set(agentId, timer);
+  }
+
+  cancel(agentId: string): void {
+    const timer = this.timers.get(agentId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.timers.delete(agentId);
+  }
+
+  clearAll(): void {
+    for (const agentId of [...this.timers.keys()]) this.cancel(agentId);
+  }
+}
+
+/**
+ * Schedule the delayed surface close for a terminal lifecycle event. No-op
+ * unless auto-close is enabled and the status is terminal. Exported as a
+ * test seam — the pipeline calls this from handleNormalized.
+ */
+export function maybeScheduleAutoClose(
+  event: LifecycleEvent,
+  config: ExtensionConfig,
+  layout: CmuxLayout,
+  autoClose: AutoCloseScheduler,
+): void {
+  if (!config.autoClose) return;
+  if (!(TERMINAL_STATUSES as readonly string[]).includes(event.status)) return;
+  autoClose.schedule(event.agentId, config.autoCloseDelayMs, () => {
+    layout.closeSurfaceFor(event.agentId);
+  });
+}
 
 export default function ompCmuxSubagents(api: ExtensionAPI): void {
   const env = process.env as Record<string, string | undefined>;
@@ -104,22 +159,25 @@ export default function ompCmuxSubagents(api: ExtensionAPI): void {
 
     const layout = new CmuxLayout(client, caller.workspaceRef, logger, config.layout, viewerCommand, repoRoot);
 
+    const autoClose = new AutoCloseScheduler();
+
     const source = new EventBusSource(api.events, logger, async (event) => {
-      await handleNormalized(event, writer, registry, layout, sessionId, caller.workspaceRef, config);
+      await handleNormalized(event, writer, registry, layout, autoClose, sessionId, caller.workspaceRef, config);
     });
     source.start();
   }
 }
 
 /** Process one normalized event: persist to JSONL, update registry, drive CMUX surfaces. Fail-open. */
-async function handleNormalized(
+export async function handleNormalized(
   event: NormalizedSubagentEvent,
   writer: EventWriter,
   registry: AgentViewRegistry,
   layout: CmuxLayout,
+  autoClose: AutoCloseScheduler,
   sessionId: string,
   workspace: string,
-  config: ReturnType<typeof loadConfig>,
+  config: ExtensionConfig,
 ): Promise<void> {
   try {
     if (event.type === "lifecycle") {
@@ -140,8 +198,13 @@ async function handleNormalized(
         }
         return;
       }
-      // terminal lifecycle: keep surface open (config.keepSurface), update view
+
+      // Terminal lifecycle: keep the surface open unless auto-close is
+      // enabled, in which case close it after the configured delay. The
+      // close is idempotent — if the user already closed the surface the
+      // timer's closeSurfaceFor no-ops.
       writer.append(event.agentId, event);
+      maybeScheduleAutoClose(event, config, layout, autoClose);
       return;
     }
 

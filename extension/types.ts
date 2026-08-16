@@ -69,10 +69,20 @@ export interface ViewerConfig {
 
 export interface ExtensionConfig {
   enabled: boolean;
-  /** "helper-pane" (default) or "split" (fallback per-agent split) */
-  layout: "helper-pane" | "split";
+  /**
+   * "split-pane" (default): right-side split column — 1 agent = full right
+   * split, 2 = top+bottom, 3 = top/middle/bottom, 4+ = extra agents tab into
+   * the first split's pane.
+   * "helper-pane": legacy one helper pane on the right, one surface per agent.
+   * "split": legacy per-agent fallback — surfaces in the caller's pane.
+   */
+  layout: "helper-pane" | "split" | "split-pane";
   /** keep completed/failed surfaces open (default true) */
   keepSurface: boolean;
+  /** close a terminal agent's surface shortly after it finishes (default true) */
+  autoClose: boolean;
+  /** delay before auto-closing a terminal agent's surface, ms (default 5000) */
+  autoCloseDelayMs: number;
   /** root dir for per-session event logs */
   dataDir: string;
   /** show detached/background subagents (default true) */
