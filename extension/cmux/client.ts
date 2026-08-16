@@ -284,6 +284,43 @@ export class CmuxClient {
     }
   }
 
+  /**
+   * Resize a pane by `amount` cells in a direction (tmux-compatible).
+   * Directions: "L" | "R" | "U" | "D". Best-effort; returns success.
+   */
+  async resizePane(workspace: string, pane: string, direction: "L" | "R" | "U" | "D", amount: number): Promise<boolean> {
+    try {
+      await this.run(["resize-pane", "--workspace", workspace, "--pane", pane, `-${direction}`, "--amount", String(amount)]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Pane width in display points (pixel_frame.width), or null when unknown. */
+  async paneWidthCells(workspace: string, pane: string): Promise<number | null> {
+    try {
+      const { stdout } = await this.run(["list-panes", "--workspace", workspace, "--json"]);
+      const parsed: unknown = JSON.parse(stdout);
+      if (typeof parsed !== "object" || parsed === null) return null;
+      const panes = (parsed as { panes?: unknown }).panes;
+      if (!Array.isArray(panes)) return null;
+      for (const p of panes) {
+        if (typeof p !== "object" || p === null) continue;
+        const rec = p as { ref?: unknown; pixel_frame?: unknown };
+        if (rec.ref !== pane) continue;
+        const frame = rec.pixel_frame;
+        if (typeof frame === "object" && frame !== null) {
+          const w = (frame as { width?: unknown }).width;
+          if (typeof w === "number") return w;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   async ping(): Promise<boolean> {
     try {
       await this.run(["ping"]);

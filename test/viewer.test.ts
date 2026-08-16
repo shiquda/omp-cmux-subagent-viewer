@@ -230,6 +230,29 @@ describe("viewer state (turn reconstruction)", () => {
     expect(state.currentToolArgs).toContain("make");
     expect(state.status).toBe("running");
   });
+
+  test("meta messages set model and thinking level for the header", () => {
+    const state = createViewerState("A", "task");
+    applySessionMessage(state, { role: "meta", meta: { model: "new-api/deepseek-v4-flash" } });
+    applySessionMessage(state, { role: "meta", meta: { thinkingLevel: "medium" } });
+    expect(state.model).toBe("new-api/deepseek-v4-flash");
+    expect(state.thinkingLevel).toBe("medium");
+  });
+
+  test("session-stream projects model_change and thinking_level_change entries", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-sess-meta-"));
+    const file = join(dir, "A.jsonl");
+    writeFileSync(
+      file,
+      sessionLine({ type: "session", version: 3, id: "s", timestamp: "t", cwd: "/x" }) +
+        sessionLine({ type: "model_change", id: "m", parentId: null, timestamp: "t", model: "new-api/deepseek-v4-flash" }) +
+        sessionLine({ type: "thinking_level_change", id: "t2", parentId: null, timestamp: "t", thinkingLevel: "high", configured: true }),
+    );
+    const read = readSessionFileTail(file, 0);
+    expect(read.messages.length).toBe(2);
+    expect(read.messages[0].meta?.model).toBe("new-api/deepseek-v4-flash");
+    expect(read.messages[1].meta?.thinkingLevel).toBe("high");
+  });
 });
 
 describe("viewer stream (extension JSONL)", () => {

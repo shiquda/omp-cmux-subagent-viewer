@@ -169,7 +169,7 @@ export default function ompCmuxSubagents(api: ExtensionAPI): void {
       return `bun ${VIEWER_ENTRY} --session ${sessionId} --agent ${view.agentId} --data-dir ${config.dataDir}${sessionFileArg}; echo "[viewer exited]"`;
     };
 
-    const layout = new CmuxLayout(client, caller.workspaceRef, logger, config.layout, viewerCommand, repoRoot);
+    const layout = new CmuxLayout(client, caller.workspaceRef, logger, config.layout, viewerCommand, repoRoot, config.mainSplitRatio);
 
     const autoClose = new AutoCloseScheduler();
 

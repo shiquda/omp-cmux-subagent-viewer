@@ -83,6 +83,8 @@ export interface ExtensionConfig {
   autoClose: boolean;
   /** delay before auto-closing a terminal agent's surface, ms (default 5000) */
   autoCloseDelayMs: number;
+  /** main (left) pane share of the width in split-pane mode (default 0.65). */
+  mainSplitRatio: number;
   /** root dir for per-session event logs */
   dataDir: string;
   /** show detached/background subagents (default true) */

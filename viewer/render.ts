@@ -76,6 +76,12 @@ export function renderView(state: ViewerState): string {
 
   lines.push(`${BOLD}${state.agentType}${RESET} ${DIM}· ${state.agentId}${RESET}`);
   lines.push(`${statusColor(state.status)}${status} ${state.status}${RESET} ${DIM}· ${duration}${RESET}`);
+  if (state.model || state.thinkingLevel) {
+    const modelPart = state.model ? state.model : "";
+    const levelPart = state.thinkingLevel ? `thinking:${state.thinkingLevel}` : "";
+    const sep = modelPart && levelPart ? " · " : "";
+    lines.push(`${MAGENTA}${modelPart}${sep}${levelPart}${RESET}`);
+  }
   if (state.description) lines.push(`${DIM}${state.description}${RESET}`);
   lines.push("");
 

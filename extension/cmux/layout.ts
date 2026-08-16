@@ -47,6 +47,8 @@ export class CmuxLayout {
     private readonly layout: LayoutMode,
     private readonly viewerCommand: (view: AgentView) => string,
     private readonly viewerCwd: string,
+    /** Main (left) pane share of the width in split-pane mode; 0.5 = even. */
+    private readonly mainSplitRatio = 0.65,
   ) {}
 
   /** Ensure the helper pane exists (idempotent, concurrency-safe). Returns pane ref or null. */
@@ -152,7 +154,12 @@ export class CmuxLayout {
       // Remember the caller pane so auto-close can hand focus back to it.
       if (caller?.pane_ref) this.state.callerPane = caller.pane_ref;
       const surface = await this.client.newSplit("right", { workspace: this.workspace, surface: anchor });
-      if (surface) this.state.splitSurfaces.push(surface);
+      if (surface) {
+        this.state.splitSurfaces.push(surface);
+        // new-split right defaults to 50/50. Widen the caller (main) pane to
+        // the configured share so the right agent column takes the remainder.
+        if (caller?.pane_ref) await this.applyMainSplitRatio(caller.pane_ref);
+      }
       return surface;
     }
 
@@ -167,6 +174,42 @@ export class CmuxLayout {
     const pane = await this.findPaneForSurface(anchor);
     if (!pane) return null;
     return this.client.createSurface(this.workspace, pane, this.viewerCwd);
+  }
+
+  /**
+   * Widen the caller (main) pane to `mainSplitRatio` of the total width after
+   * the first right split lands. cmux new-split right splits 50/50 and its
+   * resize-pane amount maps to roughly one cell (~8.5pt) each, so we resize
+   * in a small feedback loop until the main pane reaches the target share.
+   * Best-effort — any failure leaves whatever split exists, never throws.
+   */
+  private async applyMainSplitRatio(callerPane: string): Promise<void> {
+    const ratio = this.mainSplitRatio;
+    if (ratio <= 0 || ratio >= 1) return;
+    try {
+      const r1 = this.state.splitSurfaces[0];
+      if (!r1) return;
+      const rightPane = await this.findPaneForSurface(r1);
+      if (!rightPane) return;
+      // Feedback loop: read both widths (points), grow the main pane toward
+      // its target share, re-read, repeat. Bounded to avoid infinite loops.
+      for (let i = 0; i < 16; i += 1) {
+        const mainW = await this.client.paneWidthCells(this.workspace, callerPane);
+        const rightW = await this.client.paneWidthCells(this.workspace, rightPane);
+        if (mainW === null || rightW === null) return;
+        const total = mainW + rightW;
+        if (total <= 0) return;
+        const targetMain = total * ratio;
+        const deficit = targetMain - mainW;
+        // Within ~1 cell of the target → done.
+        if (deficit <= 9) return;
+        // resize-pane amount ≈ cells; ~8.5pt per cell. Clamp to a sane step.
+        const amount = Math.max(1, Math.min(40, Math.round(deficit / 8.5)));
+        await this.client.resizePane(this.workspace, callerPane, "R", amount);
+      }
+    } catch {
+      // fail-open
+    }
   }
 
   /** Locate the pane that currently holds `surface`. */

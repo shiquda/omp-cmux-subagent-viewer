@@ -32,6 +32,12 @@ export interface DisplayMessage {
    * call once it lands.
    */
   toolStart?: DisplayToolCall;
+  /**
+   * Session metadata projected from model_change / thinking_level_change
+   * entries: the subagent's model and reasoning (thinking) level, shown in
+   * the viewer header.
+   */
+  meta?: { model?: string; thinkingLevel?: string };
 }
 
 export interface SessionTranscript {
@@ -82,6 +88,17 @@ function toDisplayMessage(entry: unknown): DisplayMessage | null {
         intent: typeof data.intent === "string" ? data.intent : undefined,
       },
     };
+  }
+
+  // Session metadata: the subagent's model and reasoning level, projected so
+  // the viewer header can show them.
+  if (e.type === "model_change") {
+    const model = typeof e.model === "string" ? e.model : undefined;
+    return model ? { role: "meta", meta: { model } } : null;
+  }
+  if (e.type === "thinking_level_change") {
+    const thinkingLevel = typeof e.thinkingLevel === "string" ? e.thinkingLevel : undefined;
+    return thinkingLevel ? { role: "meta", meta: { thinkingLevel } } : null;
   }
 
   if (e.type !== "message") return null;

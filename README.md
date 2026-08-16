@@ -91,6 +91,7 @@ not load, so the command is unavailable).
 | `OMP_CMUX_SUBAGENTS_KEEP_SURFACE` | `true` | keep completed surfaces open (when auto-close is off) |
 | `OMP_CMUX_SUBAGENTS_AUTO_CLOSE` | `true` | close finished agents' surfaces automatically |
 | `OMP_CMUX_SUBAGENTS_AUTO_CLOSE_DELAY_MS` | `5000` | delay before auto-closing a finished surface |
+| `OMP_CMUX_SUBAGENTS_MAIN_SPLIT_RATIO` | `0.65` | main (left) pane share of the width in split-pane mode; agent column takes the rest |
 | `OMP_CMUX_SUBAGENTS_SHOW_DETACHED` | `true` | visualize background/detached agents |
 | `OMP_CMUX_SUBAGENTS_DATA_DIR` | `~/.local/state/omp-cmux-subagents` | per-session JSONL root |
 | `OMP_CMUX_SUBAGENTS_MAX_EVENTS` | `2000` | viewer history cap |

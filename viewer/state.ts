@@ -35,6 +35,9 @@ export interface ViewerState {
   agentId: string;
   agentType: string;
   description?: string;
+  /** subagent model + reasoning level (from session meta entries). */
+  model?: string;
+  thinkingLevel?: string;
   status: SubagentStatus;
   startedAt?: number;
   completedAt?: number;
@@ -202,6 +205,13 @@ function resolveToolCall(state: ViewerState, message: DisplayMessage): void {
 export function applySessionMessage(state: ViewerState, message: DisplayMessage): void {
   if (message.role === "user") {
     if (state.task === undefined && message.text) state.task = truncate(message.text, MAX_LINE_LENGTH * 4);
+    return;
+  }
+
+  // Session meta: model / reasoning level for the header.
+  if (message.role === "meta" && message.meta) {
+    if (message.meta.model) state.model = message.meta.model;
+    if (message.meta.thinkingLevel) state.thinkingLevel = message.meta.thinkingLevel;
     return;
   }
 

@@ -91,6 +91,8 @@ class SplitRunner {
   callerSurface = "surface:0";
   /** pane ref currently focused in the fake tree (focus-pane sets it). */
   focusedPaneRef = "pane:0";
+  /** pane ref -> width in points (for list-panes --json + resize-pane). */
+  widthOf = new Map<string, number>([["pane:0", 500]]);
 
   async exec(argv: string[]): Promise<CommandResult> {
     this.calls.push(argv);
@@ -116,6 +118,16 @@ class SplitRunner {
       this.surfaces.push(surface);
       this.panes.push(pane);
       this.paneOf.set(surface, pane);
+      // A horizontal (left/right) split shares width 50/50; a vertical
+      // (up/down) split keeps the column width.
+      const dir = argv[2];
+      if (dir === "right" || dir === "left") {
+        const callerW = this.widthOf.get("pane:0") ?? 500;
+        this.widthOf.set("pane:0", callerW / 2);
+        this.widthOf.set(pane, callerW / 2);
+      } else {
+        this.widthOf.set(pane, this.widthOf.get("pane:0") ?? 500);
+      }
       return { code: 0, stdout: `OK ${surface} workspace:8\n`, stderr: "" };
     }
     if (cmd === "new-surface") {
@@ -128,11 +140,29 @@ class SplitRunner {
     }
     if (cmd === "list-panes") {
       const all = ["pane:0", ...this.panes];
+      if (argv.includes("--json")) {
+        // pane:0 = main (left); splits are the right column. Track widths so
+        // resize-pane feedback can converge.
+        const panes = all.map((p) => ({
+          ref: p,
+          focused: p === this.focusedPaneRef,
+          pixel_frame: { x: 0, y: 0, width: this.widthOf.get(p) ?? 500, height: 900 },
+        }));
+        return { code: 0, stdout: JSON.stringify({ container_frame: { width: 1000, height: 900 }, panes }), stderr: "" };
+      }
       return {
         code: 0,
         stdout: all.map((p) => `${p}  [1 surface]${p === this.focusedPaneRef ? "  [focused]" : ""}`).join("\n"),
         stderr: "",
       };
+    }
+    if (cmd === "resize-pane") {
+      const pane = argv[argv.indexOf("--pane") + 1];
+      const amount = Number(argv[argv.indexOf("--amount") + 1] ?? "1");
+      // ~8.5pt per amount unit; grow this pane, shrink the other right-column one.
+      const delta = amount * 8.5;
+      this.widthOf.set(pane, (this.widthOf.get(pane) ?? 500) + delta);
+      return { code: 0, stdout: `OK ${pane}\n`, stderr: "" };
     }
     if (cmd === "list-pane-surfaces") {
       const pane = argv[argv.indexOf("--pane") + 1];
@@ -187,6 +217,23 @@ describe("CmuxLayout split-pane placement", () => {
     expect(runner.newSurfaceCalls().length).toBe(0);
     expect(layout.state.splitSurfaces).toEqual(["surface:101"]);
     expect(layout.state.surfaces.get("A")).toBe("surface:101");
+  });
+
+  test("1 agent: main pane widened toward the 65% share after the right split", async () => {
+    const runner = new SplitRunner();
+    const layout = makeSplitLayout(runner);
+    await layout.ensureSurface(makeView("A"));
+    // After the 50/50 right split, the layout must resize the caller (pane:0)
+    // rightward to approach the 65% main / 35% agent share.
+    const resizes = runner.calls.filter((c) => c[1] === "resize-pane");
+    expect(resizes.length).toBeGreaterThan(0);
+    for (const r of resizes) {
+      expect(r[r.indexOf("--pane") + 1]).toBe("pane:0");
+      expect(r.includes("-R")).toBe(true);
+    }
+    // The fake starts both panes at 250pt (500/2). Target main = 0.65*500 = 325.
+    // The resize feedback loop grew pane:0; final width must exceed the 250 start.
+    expect(runner.widthOf.get("pane:0") ?? 0).toBeGreaterThan(250);
   });
 
   test("2 agents: R1 top + down split R2 bottom", async () => {

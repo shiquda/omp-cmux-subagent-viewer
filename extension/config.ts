@@ -13,6 +13,7 @@ const DEFAULTS: ExtensionConfig = {
   keepSurface: true,
   autoClose: true,
   autoCloseDelayMs: 5000,
+  mainSplitRatio: 0.65,
   dataDir: join(homedir(), ".local", "state", "omp-cmux-subagents"),
   showDetached: true,
   viewer: {
@@ -35,6 +36,12 @@ function numFromEnv(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/** Parse a (0,1) split ratio from env; out-of-range falls back. */
+function ratioFromEnv(value: string | undefined, fallback: number): number {
+  const parsed = numFromEnv(value, fallback);
+  return parsed > 0 && parsed < 1 ? parsed : fallback;
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): ExtensionConfig {
   const layoutRaw = env.OMP_CMUX_SUBAGENTS_LAYOUT;
   const layout: ExtensionConfig["layout"] =
@@ -51,6 +58,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     keepSurface: boolFromEnv(env.OMP_CMUX_SUBAGENTS_KEEP_SURFACE, DEFAULTS.keepSurface),
     autoClose: boolFromEnv(env.OMP_CMUX_SUBAGENTS_AUTO_CLOSE, DEFAULTS.autoClose),
     autoCloseDelayMs: numFromEnv(env.OMP_CMUX_SUBAGENTS_AUTO_CLOSE_DELAY_MS, DEFAULTS.autoCloseDelayMs),
+    mainSplitRatio: ratioFromEnv(env.OMP_CMUX_SUBAGENTS_MAIN_SPLIT_RATIO, DEFAULTS.mainSplitRatio),
     dataDir: env.OMP_CMUX_SUBAGENTS_DATA_DIR ?? DEFAULTS.dataDir,
     showDetached: boolFromEnv(env.OMP_CMUX_SUBAGENTS_SHOW_DETACHED, DEFAULTS.showDetached),
     viewer: {
