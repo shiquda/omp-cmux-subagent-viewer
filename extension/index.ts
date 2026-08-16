@@ -101,6 +101,14 @@ export default function ompCmuxSubagents(api: ExtensionAPI): void {
     return;
   }
 
+  // Shared runtime on/off flag. registerCommand must run synchronously at
+  // factory time (the host builds its slash-command registry when the
+  // extension loads, before any session_start), so the command and the
+  // per-session pipeline share this flag: session_start seeds it from the
+  // persisted global state, and the slash handler flips it live.
+  const toggle = { enabled: readGlobalEnabled(config.dataDir, logger) };
+  registerToggleCommand(api, config.dataDir, toggle, logger);
+
   let ctx: ExtensionContext | undefined;
 
   api.on("session_start", async (_event, c) => {
@@ -115,6 +123,9 @@ export default function ompCmuxSubagents(api: ExtensionAPI): void {
       return;
     }
     ctx = c;
+    // Refresh from the persisted global state on each parent session start,
+    // so a toggle in another session takes effect here.
+    toggle.enabled = readGlobalEnabled(config.dataDir, logger);
     try {
       await startPipeline(c);
     } catch (err) {
@@ -162,29 +173,23 @@ export default function ompCmuxSubagents(api: ExtensionAPI): void {
 
     const autoClose = new AutoCloseScheduler();
 
-    // Global on/off switch, persisted across sessions (marker file under
-    // dataDir). Read once at session start; the /subagent-viewer slash
-    // command flips both the persisted state and this runtime flag. The flag
-    // only gates NEW surface creation — surfaces already open are untouched.
-    const toggle = { enabled: readGlobalEnabled(config.dataDir, logger) };
-
+    // Shared runtime on/off flag (registered at factory time). Seeded from
+    // the persisted global state on session_start; the slash command flips it
+    // live. Only gates NEW surface creation — open surfaces are untouched.
     const source = new EventBusSource(api.events, logger, async (event) => {
       await handleNormalized(event, writer, registry, layout, autoClose, sessionId, caller.workspaceRef, config, toggle);
     });
     source.start();
-
-    registerToggleCommand(api, c, config.dataDir, toggle, logger);
   }
 }
 
 /**
  * Register `/subagent-viewer [on|off]` to toggle subagent surfaces globally.
  * Persists the choice (marker file) so later sessions inherit it, and flips
- * the runtime flag for this session. Bare invocation toggles. Fail-open.
+ * the shared runtime flag. Bare invocation toggles. Fail-open.
  */
 function registerToggleCommand(
   api: ExtensionAPI,
-  ctx: ExtensionContext,
   dataDir: string,
   toggle: { enabled: boolean },
   logger: ExtensionLogger,
@@ -204,14 +209,14 @@ function registerToggleCommand(
         const filtered = opts.filter((o) => o.label.startsWith(q));
         return filtered.length > 0 ? filtered : null;
       },
-      handler(args) {
+      handler(args, cmdCtx) {
         const a = args.trim().toLowerCase();
         if (a === "on") toggle.enabled = true;
         else if (a === "off") toggle.enabled = false;
         else toggle.enabled = !toggle.enabled;
         writeGlobalEnabled(dataDir, toggle.enabled, logger);
         const state = toggle.enabled ? "on" : "off";
-        ctx.ui?.notify?.(`Subagent viewer: ${state} (global)`, "info");
+        cmdCtx?.ui?.notify?.(`Subagent viewer: ${state} (global)`, "info");
         logger.info(`[cmux-subagents] viewer toggled ${state} via slash command`);
       },
     });
