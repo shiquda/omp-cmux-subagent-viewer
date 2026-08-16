@@ -73,6 +73,15 @@ gets its own split (up to 3), then tabs into the first split's pane — each
 surface titled `<agentType> · <agentId>`. When an agent finishes, its
 surface auto-closes after the configured delay (default 5 s).
 
+### Toggle at runtime: `/subagent-viewer`
+
+Inside an OMP session, run `/subagent-viewer` (or `/subagent-viewer on` /
+`off`) to globally enable/disable subagent surfaces. The choice is persisted
+(marker file under the data dir), so every later session inherits it. The
+toggle only gates **new** surface creation — surfaces already open are left
+alone. `OMP_CMUX_SUBAGENTS_ENABLED=false` is a hard off (the extension does
+not load, so the command is unavailable).
+
 ### Config (env)
 
 | Var | Default | Meaning |

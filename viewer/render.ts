@@ -35,7 +35,14 @@ function renderToolCall(turn: Turn, callIdx: number): string[] {
   const call = turn.toolCalls[callIdx];
   const lines: string[] = [];
   const marker = call.done ? (call.isError ? `${RED}✗${RESET}` : `${GREEN}✓${RESET}`) : `${CYAN}…${RESET}`;
-  const header = `  ${marker} ${BOLD}${call.name}${RESET}${call.args ? ` ${DIM}${call.args}${RESET}` : ""}`;
+  let header = `  ${marker} ${BOLD}${call.name}${RESET}${call.args ? ` ${DIM}${call.args}${RESET}` : ""}`;
+  if (call.diff) {
+    const { added, removed } = call.diff;
+    const parts: string[] = [];
+    if (added > 0) parts.push(`${GREEN}+${added}${RESET}`);
+    if (removed > 0) parts.push(`${RED}-${removed}${RESET}`);
+    if (parts.length > 0) header += ` ${parts.join(" ")}`;
+  }
   lines.push(header);
   if (call.intent) lines.push(`      ${DIM}${call.intent}${RESET}`);
   // Tool output is intentionally omitted: the viewer shows what the agent is

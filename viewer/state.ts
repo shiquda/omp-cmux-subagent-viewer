@@ -15,6 +15,8 @@ export interface ToolCallEntry {
   name: string;
   args: string;
   intent?: string;
+  /** edit/write change size: lines added / removed (green/red in the view). */
+  diff?: { added: number; removed: number };
   /** true once the matching toolResult arrived */
   done: boolean;
   isError?: boolean;
@@ -115,12 +117,58 @@ function pushTool(state: ViewerState, entry: ToolCallEntry): void {
   }
 }
 
+/**
+ * Compact, human-facing summary of a tool call's args. We surface the one
+ * field that identifies what the tool acts on instead of the full JSON blob:
+ * bash → command, file tools → path, search tools → pattern, etc. Falls back
+ * to truncated JSON for anything unrecognized.
+ */
+function countLines(s: unknown): number {
+  if (typeof s !== "string" || s.length === 0) return 0;
+  return s.split("\n").length;
+}
+
+/**
+ * Line-change size for edit/write-style tools, derived from the raw args.
+ * edit → old_string vs new_string line counts; write → content line count as
+ * pure additions. Returns undefined for tools without a meaningful diff.
+ */
+function diffStats(name: string, args: unknown): { added: number; removed: number } | undefined {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) return undefined;
+  const a = args as Record<string, unknown>;
+  if (name === "edit" || name === "multiedit") {
+    const added = countLines(a.new_string);
+    const removed = countLines(a.old_string);
+    if (added === 0 && removed === 0) return undefined;
+    return { added, removed };
+  }
+  if (name === "write") {
+    const added = countLines(a.content);
+    if (added === 0) return undefined;
+    return { added, removed: 0 };
+  }
+  return undefined;
+}
+
 function argsSummary(args: unknown): string {
-  if (args === undefined) return "";
+  if (args === undefined || args === null) return "";
+  if (typeof args === "string") return truncate(args, MAX_LINE_LENGTH);
+  if (typeof args !== "object" || Array.isArray(args)) {
+    try {
+      return truncate(JSON.stringify(args), MAX_LINE_LENGTH);
+    } catch {
+      return "";
+    }
+  }
+  const a = args as Record<string, unknown>;
+  // The single most identifying field per common tool, in priority order.
+  const KEYS = ["command", "path", "pattern", "file_path", "query", "url", "task", "prompt"];
+  for (const key of KEYS) {
+    const v = a[key];
+    if (typeof v === "string" && v.trim()) return truncate(v, MAX_LINE_LENGTH);
+  }
   try {
-    if (typeof args === "string") return truncate(args, MAX_LINE_LENGTH);
-    const json = JSON.stringify(args);
-    return truncate(json, MAX_LINE_LENGTH);
+    return truncate(JSON.stringify(args), MAX_LINE_LENGTH);
   } catch {
     return "";
   }
@@ -171,6 +219,7 @@ export function applySessionMessage(state: ViewerState, message: DisplayMessage)
         name: call.name,
         args: argsSummary(call.args),
         intent: call.intent,
+        diff: diffStats(call.name, call.args),
         done: false,
       };
       turn.toolCalls.push(entry);
@@ -203,6 +252,7 @@ export function applySessionMessage(state: ViewerState, message: DisplayMessage)
         name: call.name,
         args: argsSummary(call.args),
         intent: call.intent,
+        diff: diffStats(call.name, call.args),
         done: false,
       };
       turn.toolCalls.push(entry);

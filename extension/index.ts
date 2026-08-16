@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { loadConfig } from "./config";
+import { readGlobalEnabled, writeGlobalEnabled } from "./toggle-state";
 import { makeSessionRoot } from "./event-writer";
 import { EventBusSource } from "./event-source";
 import { CmuxClient } from "./cmux/client";
@@ -28,7 +29,7 @@ import { detectCallerContext } from "./cmux/context";
 import { CmuxLayout } from "./cmux/layout";
 import { AgentViewRegistry } from "./agent-view-registry";
 import { EventWriter } from "./event-writer";
-import type { ExtensionAPI, ExtensionContext } from "./omp-api";
+import type { ExtensionAPI, ExtensionContext, ExtensionLogger } from "./omp-api";
 import type { AgentView, ExtensionConfig, LifecycleEvent, NormalizedSubagentEvent } from "./types";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -161,10 +162,61 @@ export default function ompCmuxSubagents(api: ExtensionAPI): void {
 
     const autoClose = new AutoCloseScheduler();
 
+    // Global on/off switch, persisted across sessions (marker file under
+    // dataDir). Read once at session start; the /subagent-viewer slash
+    // command flips both the persisted state and this runtime flag. The flag
+    // only gates NEW surface creation — surfaces already open are untouched.
+    const toggle = { enabled: readGlobalEnabled(config.dataDir, logger) };
+
     const source = new EventBusSource(api.events, logger, async (event) => {
-      await handleNormalized(event, writer, registry, layout, autoClose, sessionId, caller.workspaceRef, config);
+      await handleNormalized(event, writer, registry, layout, autoClose, sessionId, caller.workspaceRef, config, toggle);
     });
     source.start();
+
+    registerToggleCommand(api, c, config.dataDir, toggle, logger);
+  }
+}
+
+/**
+ * Register `/subagent-viewer [on|off]` to toggle subagent surfaces globally.
+ * Persists the choice (marker file) so later sessions inherit it, and flips
+ * the runtime flag for this session. Bare invocation toggles. Fail-open.
+ */
+function registerToggleCommand(
+  api: ExtensionAPI,
+  ctx: ExtensionContext,
+  dataDir: string,
+  toggle: { enabled: boolean },
+  logger: ExtensionLogger,
+): void {
+  if (typeof api.registerCommand !== "function") return;
+  try {
+    api.registerCommand("subagent-viewer", {
+      description: "Toggle OMP subagent CMUX surfaces on/off globally (persisted).",
+      getArgumentCompletions(arg) {
+        if (arg.includes(" ")) return null;
+        const q = arg.trim().toLowerCase();
+        if (q.length === 0) return null;
+        const opts = [
+          { label: "on", value: "on", description: "Enable subagent surfaces" },
+          { label: "off", value: "off", description: "Disable subagent surfaces" },
+        ];
+        const filtered = opts.filter((o) => o.label.startsWith(q));
+        return filtered.length > 0 ? filtered : null;
+      },
+      handler(args) {
+        const a = args.trim().toLowerCase();
+        if (a === "on") toggle.enabled = true;
+        else if (a === "off") toggle.enabled = false;
+        else toggle.enabled = !toggle.enabled;
+        writeGlobalEnabled(dataDir, toggle.enabled, logger);
+        const state = toggle.enabled ? "on" : "off";
+        ctx.ui?.notify?.(`Subagent viewer: ${state} (global)`, "info");
+        logger.info(`[cmux-subagents] viewer toggled ${state} via slash command`);
+      },
+    });
+  } catch (err) {
+    logger.warn(`[cmux-subagents] registerCommand failed: ${(err as Error).message}`);
   }
 }
 
@@ -178,6 +230,8 @@ export async function handleNormalized(
   sessionId: string,
   workspace: string,
   config: ExtensionConfig,
+  /** Runtime on/off switch (slash command). When omitted, always enabled. */
+  toggle: { enabled: boolean } = { enabled: true },
 ): Promise<void> {
   try {
     if (event.type === "lifecycle") {
@@ -191,6 +245,9 @@ export async function handleNormalized(
           return;
         }
         writer.append(event.agentId, event);
+        // Runtime toggle: when off, keep recording the JSONL stream but do
+        // not create or rename any surface.
+        if (!toggle.enabled) return;
         const surface = await layout.ensureSurface(view);
         if (surface) {
           registry.attachSurface(event.agentId, surface);

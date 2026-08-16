@@ -40,6 +40,18 @@ export interface ExtensionAPI {
   logger: ExtensionLogger;
   on(event: string, handler: (event: unknown, ctx: ExtensionContext) => void | Promise<void>): unknown;
   getFlag?(name: string): unknown;
+  /**
+   * Register a custom slash command `/name`. Handler receives the raw
+   * argument string and the HookCommandContext (which carries `ui.notify`).
+   */
+  registerCommand?(
+    name: string,
+    options: {
+      description: string;
+      getArgumentCompletions?(arg: string): Array<{ label: string; value: string; description?: string }> | null;
+      handler(args: string, ctx: ExtensionContext): void | Promise<void>;
+    },
+  ): unknown;
 }
 
 export type ExtensionFactory = (api: ExtensionAPI) => void | Promise<void>;
