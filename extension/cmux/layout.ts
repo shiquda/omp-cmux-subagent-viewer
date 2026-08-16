@@ -86,10 +86,29 @@ export class CmuxLayout {
     return creation;
   }
 
+  /**
+   * Serialize split-pane placement across agents. Without this, N subagents
+   * spawned in parallel all observe splitSurfaces.length === 0 before the
+   * first split lands, and each splits right from the caller — producing a
+   * horizontal row instead of the intended right column. Chaining the
+   * placement step makes the length check + split atomic per agent.
+   */
+  private splitChain: Promise<unknown> = Promise.resolve();
+
+  private enqueueSplitPlacement<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.splitChain.then(fn, fn);
+    // Keep the chain alive even when one placement fails.
+    this.splitChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   private async createSurfaceInner(view: AgentView): Promise<string | null> {
     let surface: string | null = null;
     if (this.layout === "split-pane") {
-      surface = await this.createSplitPaneSurface(view);
+      surface = await this.enqueueSplitPlacement(() => this.createSplitPaneSurface(view));
     } else {
       let pane: string | null = null;
       if (this.layout === "helper-pane") {

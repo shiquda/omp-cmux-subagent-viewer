@@ -200,6 +200,35 @@ describe("CmuxLayout split-pane placement", () => {
     expect(runner.newSurfaceCalls().length).toBe(0);
   });
 
+  test("3 agents spawned in parallel still form a right column (not a horizontal row)", async () => {
+    const runner = new SplitRunner();
+    const layout = makeSplitLayout(runner);
+    // Spawn concurrently — the regression this guards: without serialization,
+    // all three observe splitSurfaces.length === 0 and each splits right.
+    const [rA, rB, rC] = await Promise.all([
+      layout.ensureSurface(makeView("A")),
+      layout.ensureSurface(makeView("B")),
+      layout.ensureSurface(makeView("C")),
+    ]);
+    expect(rA).not.toBeNull();
+    expect(rB).not.toBeNull();
+    expect(rC).not.toBeNull();
+    const sA = rA as string;
+    const sB = rB as string;
+    const sC = rC as string;
+    const splits = runner.newSplitCalls();
+    expect(splits.length).toBe(3);
+    // Exactly one right split (R1); the other two are downs anchored on R1.
+    const right = splits.filter((c) => c[2] === "right");
+    const downs = splits.filter((c) => c[2] === "down");
+    expect(right.length).toBe(1);
+    expect(downs.length).toBe(2);
+    for (const down of downs) {
+      expect(down[down.indexOf("--surface") + 1]).toBe(sA);
+    }
+    expect(layout.state.splitSurfaces).toEqual([sA, sB, sC]);
+  });
+
   test("4th agent becomes a tab in R1's pane (no fourth split)", async () => {
     const runner = new SplitRunner();
     const layout = makeSplitLayout(runner);
