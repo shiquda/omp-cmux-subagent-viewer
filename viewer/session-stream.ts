@@ -6,7 +6,7 @@
 // tool results, and the user task. No OMP core code is touched; the file is
 // read-only.
 
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
 
 import type { NormalizedSubagentEvent } from "../extension/types";
 
@@ -153,66 +153,90 @@ function toDisplayMessage(entry: unknown): DisplayMessage | null {
   return { role, timestamp };
 }
 
+const READ_CHUNK_BYTES = 64 * 1024;
+const SESSION_HEADER = Buffer.from('{"type":"session"');
+
 /**
- * Read new session-file bytes since `offset` and append display messages.
- * Session files are append-only; the physical first 256 bytes are a fixed
- * title slot that must be skipped before the logical JSONL body.
- *
- * Invariants:
- * - `offset` is a BYTE offset (matches statSync().size and the nextOffset
- *   contract); all arithmetic is done on the raw Buffer before decoding.
- * - An unterminated trailing line (poll caught a mid-write) is left
- *   unconsumed: nextOffset stays at its start so the next poll re-reads it.
+ * Read new session-file bytes since `offset` without loading the transcript
+ * into one large string. The returned offset points at the start of an
+ * unterminated line so a mid-write line is retried on the next poll.
  */
 export function readSessionFileTail(filePath: string, offset: number): SessionTranscript {
   const messages: DisplayMessage[] = [];
   let reset = false;
-
-  let buf: Buffer;
+  let size: number;
   try {
-    buf = readFileSync(filePath);
+    size = statSync(filePath).size;
   } catch {
     return { messages, nextOffset: offset, reset };
   }
 
-  // A full rewrite (migration or a superseded write) can shrink the file;
-  // restart from the body so we don't slice into the middle of new content.
-  if (buf.length < offset) {
+  if (size < offset) {
     offset = 0;
     reset = true;
   }
-  if (buf.length <= offset) return { messages, nextOffset: offset, reset };
+  if (size <= offset) return { messages, nextOffset: offset, reset };
 
-  // Skip the fixed-width title slot on first read (offset 0): locate the
-  // logical session header rather than depending on exact slot padding.
+  // The physical title slot precedes the logical JSONL body. Probe only the
+  // first chunk to locate the session header, then tail from that byte.
   if (offset === 0) {
-    const headerAt = buf.indexOf('{"type":"session"');
-    if (headerAt < 0) return { messages, nextOffset: 0, reset };
-    offset = headerAt;
-  }
-
-  // Decode the new region, then consume only complete lines: drop the final
-  // line when it lacks a trailing newline (mid-write), leaving its bytes for
-  // the next poll.
-  const tail = buf.subarray(offset).toString("utf8");
-  let consumed = offset;
-  const lines = tail.split("\n");
-  // All lines except the last are newline-terminated; the last is complete
-  // only when the tail itself ends with a newline.
-  const lastComplete = tail.endsWith("\n") ? lines.length : lines.length - 1;
-  for (let i = 0; i < lastComplete; i += 1) {
-    const trimmed = lines[i].trim();
-    if (!trimmed) continue;
-    consumed += Buffer.byteLength(lines[i]) + 1;
+    const probeSize = Math.min(READ_CHUNK_BYTES, size);
+    let probeFd: number | undefined;
     try {
-      const entry = JSON.parse(trimmed);
-      const msg = toDisplayMessage(entry);
-      if (msg) messages.push(msg);
+      probeFd = openSync(filePath, "r");
+      const probe = Buffer.allocUnsafe(probeSize);
+      const bytesRead = readSync(probeFd, probe, 0, probeSize, 0);
+      closeSync(probeFd);
+      probeFd = undefined;
+      const headerAt = probe.subarray(0, bytesRead).indexOf(SESSION_HEADER);
+      if (headerAt < 0) return { messages, nextOffset: 0, reset };
+      offset = headerAt;
     } catch {
-      // complete but malformed line — skip it (do not retry)
+      if (probeFd !== undefined) closeSync(probeFd);
+      return { messages, nextOffset: 0, reset };
     }
   }
-  return { messages, nextOffset: consumed, reset };
+
+  let fd: number;
+  try {
+    fd = openSync(filePath, "r");
+  } catch {
+    return { messages, nextOffset: offset, reset };
+  }
+
+  const chunk = Buffer.allocUnsafe(READ_CHUNK_BYTES);
+  let position = offset;
+  let pending = Buffer.alloc(0);
+  try {
+    while (position < size) {
+      const requested = Math.min(chunk.length, size - position);
+      const bytesRead = readSync(fd, chunk, 0, requested, position);
+      if (bytesRead === 0) break;
+      position += bytesRead;
+      const data = pending.length > 0 ? Buffer.concat([pending, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
+      let lineStart = 0;
+      while (true) {
+        const newline = data.indexOf(0x0a, lineStart);
+        if (newline < 0) break;
+        const line = data.subarray(lineStart, newline).toString("utf8").trim();
+        if (line) {
+          try {
+            const entry = JSON.parse(line);
+            const message = toDisplayMessage(entry);
+            if (message) messages.push(message);
+          } catch {
+            // Complete but malformed line — skip it (do not retry).
+          }
+        }
+        lineStart = newline + 1;
+      }
+      pending = lineStart < data.length ? Buffer.from(data.subarray(lineStart)) : Buffer.alloc(0);
+    }
+  } finally {
+    closeSync(fd);
+  }
+
+  return { messages, nextOffset: position - pending.length, reset };
 }
 
 /** Reconstruct the full transcript from the start (no incremental offset). */

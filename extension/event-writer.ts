@@ -2,19 +2,43 @@
 // per-session directory. Fail-open: write errors are logged and swallowed —
 // native agent execution must never be affected by observability I/O.
 
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
+import { appendFileSync, closeSync, mkdirSync, openSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { ExtensionLogger } from "./omp-api";
 import type { NormalizedSubagentEvent } from "./types";
 
 export const AGENTS_DIR = "agents";
 export const METADATA_FILE = "metadata.json";
+/** Hard ceiling for one agent's compact event log. */
+export const MAX_AGENT_LOG_BYTES = 8 * 1024 * 1024;
+const TARGET_AGENT_LOG_BYTES = 6 * 1024 * 1024;
 
 function sessionDirName(sessionId: string): string {
   // Session ids may contain '/' (nested artifact sessions). Collapse to a
   // single path-safe segment so the data root cannot escape into subpaths.
   return sessionId.replace(/[\\/:]/g, "_");
+}
+
+function trimAgentLog(filePath: string): void {
+  const size = statSync(filePath).size;
+  if (size <= MAX_AGENT_LOG_BYTES) return;
+
+  const keepBytes = Math.min(TARGET_AGENT_LOG_BYTES, size);
+  const fd = openSync(filePath, "r");
+  const tail = Buffer.allocUnsafe(keepBytes);
+  try {
+    readSync(fd, tail, 0, keepBytes, size - keepBytes);
+  } finally {
+    closeSync(fd);
+  }
+
+  // Start at a complete JSONL record. A temporary file plus rename keeps
+  // readers from observing a partially rewritten log.
+  const firstLine = tail.indexOf(0x0a);
+  const body = firstLine >= 0 ? tail.subarray(firstLine + 1) : Buffer.alloc(0);
+  const tempPath = join(dirname(filePath), `.${basename(filePath)}.${process.pid}.tmp`);
+  writeFileSync(tempPath, body, { mode: 0o600 });
+  renameSync(tempPath, filePath);
 }
 
 export function makeSessionRoot(dataRoot: string, sessionId: string): string {
@@ -59,7 +83,9 @@ export class EventWriter {
       return false;
     }
     try {
-      appendFileSync(this.makeLogPath(agentId), line, { mode: 0o600 });
+      const logPath = this.makeLogPath(agentId);
+      appendFileSync(logPath, line, { mode: 0o600 });
+      if (statSync(logPath).size > MAX_AGENT_LOG_BYTES) trimAgentLog(logPath);
       return true;
     } catch (err) {
       const cause = this.initError ? ` (root cause: ${this.initError})` : "";

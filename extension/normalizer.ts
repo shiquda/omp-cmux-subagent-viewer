@@ -86,11 +86,28 @@ export function normalizeProgress(payload: unknown): ProgressEvent | null {
   };
 }
 
+/**
+ * Keep only the two session signals the viewer consumes between native-session
+ * polls. Message deltas contain the complete partial message and can be tens
+ * of kilobytes each; the native session file is the authoritative transcript.
+ */
+function compactSessionEvent(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.type !== "tool_execution_start" && value.type !== "tool_execution_end") return undefined;
+
+  const compact: Record<string, unknown> = { type: value.type };
+  for (const key of ["toolCallId", "toolName"] as const) {
+    if (typeof value[key] === "string" && value[key].length > 0) compact[key] = value[key];
+  }
+  return compact;
+}
+
 export function normalizeSessionEvent(payload: unknown): SessionEventEvent | null {
   if (!isRecord(payload)) return null;
   const agentId = typeof payload.id === "string" ? payload.id : undefined;
-  if (!agentId || !("event" in payload)) return null;
-  return { type: "session_event", agentId, event: payload.event, timestamp: Date.now() };
+  const event = compactSessionEvent(payload.event);
+  if (!agentId || !event) return null;
+  return { type: "session_event", agentId, event, timestamp: Date.now() };
 }
 
 export function normalizeChannelEvent(channel: Channel, payload: unknown): NormalizedSubagentEvent | null {

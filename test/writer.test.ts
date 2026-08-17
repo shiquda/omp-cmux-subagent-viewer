@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { EventWriter, makeAgentLogPath, makeSessionRoot } from "../extension/event-writer";
+import { EventWriter, makeAgentLogPath, makeSessionRoot, MAX_AGENT_LOG_BYTES } from "../extension/event-writer";
 import type { LifecycleEvent, NormalizedSubagentEvent } from "../extension/types";
 
 const quietLogger = {
@@ -43,6 +43,27 @@ describe("EventWriter", () => {
     const parsed = JSON.parse(lines[0]) as NormalizedSubagentEvent;
     expect(parsed.type).toBe("lifecycle");
     expect(parsed.agentId).toBe("AgentA");
+  });
+
+  test("trims an oversized existing log to a bounded recent tail", () => {
+    const sessionRoot = makeSessionRoot(root, "session-retention");
+    const writer = new EventWriter(sessionRoot, quietLogger);
+    writer.ensureDirs();
+    const path = writer.makeLogPath("AgentA");
+    const oldLine = `${JSON.stringify({ type: "progress", agentId: "AgentA", timestamp: 1 })}\n`;
+    writeFileSync(path, oldLine.repeat(Math.ceil((MAX_AGENT_LOG_BYTES + 1) / oldLine.length)));
+
+    const event: LifecycleEvent = {
+      type: "lifecycle",
+      agentId: "AgentA",
+      agentType: "scout",
+      status: "completed",
+      timestamp: 2,
+    };
+    expect(writer.append("AgentA", event)).toBe(true);
+    expect(statSync(path).size).toBeLessThanOrEqual(MAX_AGENT_LOG_BYTES);
+    const lines = readFileSync(path, "utf8").trim().split("\n");
+    expect(JSON.parse(lines.at(-1)!).timestamp).toBe(2);
   });
 
   test("session root escapes nested session ids safely", () => {

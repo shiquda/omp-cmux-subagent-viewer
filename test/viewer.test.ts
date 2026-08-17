@@ -84,6 +84,19 @@ describe("session-stream (read native subagent session JSONL)", () => {
     expect(second.reset).toBe(false);
   });
 
+  test("handles a transcript line larger than the read chunk", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-sess-large-"));
+    const file = join(dir, "A.jsonl");
+    const text = "x".repeat(150_000);
+    writeFileSync(
+      file,
+      sessionLine({ type: "session", version: 3, id: "s", timestamp: "t", cwd: "/x" }) +
+        sessionLine(messageEntry({ role: "assistant", content: [{ type: "text", text }] })),
+    );
+    const read = readSessionFileTail(file, 0);
+    expect(read.messages[0].text).toBe(text);
+  });
+
   test("unterminated trailing line is not consumed (re-read next poll)", () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-sess4-"));
     const file = join(dir, "A.jsonl");
@@ -271,5 +284,29 @@ describe("viewer stream (extension JSONL)", () => {
     await new Promise((r) => setTimeout(r, 120));
     stream.stop();
     expect(seen).toContainEqual(e2);
+  });
+
+  test("retains a partial UTF-8 line until the next poll", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-cmux-stream-partial-"));
+    const file = join(dir, "A.jsonl");
+    const event: NormalizedSubagentEvent = {
+      type: "lifecycle",
+      agentId: "A-é",
+      agentType: "scout",
+      status: "started",
+      timestamp: 1,
+    };
+    const bytes = Buffer.from(`${JSON.stringify(event)}\n`, "utf8");
+    const splitAt = bytes.indexOf(Buffer.from("é", "utf8")) + 1;
+    writeFileSync(file, bytes.subarray(0, splitAt));
+
+    const seen: NormalizedSubagentEvent[] = [];
+    const stream = new ViewerStream(file, (value) => seen.push(value));
+    stream.seed();
+    expect(seen).toEqual([]);
+
+    appendFileSync(file, bytes.subarray(splitAt));
+    stream.seed();
+    expect(seen).toEqual([event]);
   });
 });

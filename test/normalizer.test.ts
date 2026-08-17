@@ -94,19 +94,35 @@ describe("normalizeProgress", () => {
 });
 
 describe("normalizeSessionEvent", () => {
-  test("raw event passthrough with agent id", () => {
-    const event = normalizeSessionEvent({
+  test("keeps only compact tool execution signals", () => {
+    const start = normalizeSessionEvent({
       id: "ScoutA",
-      event: { type: "agent_start" },
+      event: {
+        type: "tool_execution_start",
+        toolCallId: "call_1",
+        toolName: "bash",
+        args: { command: "echo hi", huge: "x".repeat(100_000) },
+      },
     });
-    expect(event).not.toBeNull();
-    expect(event!.agentId).toBe("ScoutA");
-    expect(event!.event).toEqual({ type: "agent_start" });
+    expect(start).toEqual({
+      type: "session_event",
+      agentId: "ScoutA",
+      event: { type: "tool_execution_start", toolCallId: "call_1", toolName: "bash" },
+      timestamp: expect.any(Number),
+    });
+
+    expect(
+      normalizeSessionEvent({
+        id: "ScoutA",
+        event: { type: "message_update", assistantMessageEvent: { delta: "x".repeat(100_000) } },
+      }),
+    ).toBeNull();
   });
 
-  test("missing id or event returns null", () => {
+  test("missing id or unrecognized event returns null", () => {
     expect(normalizeSessionEvent({ id: "A" })).toBeNull();
-    expect(normalizeSessionEvent({ event: { type: "x" } })).toBeNull();
+    expect(normalizeSessionEvent({ event: { type: "tool_execution_start" } })).toBeNull();
+    expect(normalizeSessionEvent({ id: "A", event: { type: "agent_start" } })).toBeNull();
     expect(normalizeSessionEvent(null)).toBeNull();
   });
 });

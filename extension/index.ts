@@ -276,7 +276,8 @@ export async function handleNormalized(
       return;
     }
 
-    // session_event — fine-grained raw stream; write through for the viewer.
+    // session_event — only compact tool execution signals reach the writer;
+    // the native session file is the viewer's full-fidelity transcript.
     writer.append(event.agentId, event);
   } catch (err) {
     // fail-open: a viewer/cmux hiccup must never surface into OMP

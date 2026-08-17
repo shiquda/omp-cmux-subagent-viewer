@@ -105,13 +105,14 @@ not load, so the command is unavailable).
 ```text
 extension/            OMP extension — event source → normalizer → registry → JSONL → cmux
   cmux/               cmux CLI client, caller context, split-pane/helper-pane layout
-  normalizer.ts       OMP payload → stable protocol (extension/types.ts)
+  normalizer.ts       OMP payload → compact stable protocol (extension/types.ts)
   agent-view-registry.ts  per-agent state machine (id-keyed, idempotent, concurrency-safe)
-  event-writer.ts     per-agent JSONL (0700 dirs / 0600 files)
+  event-writer.ts     bounded compact per-agent JSONL (0700 dirs / 0600 files; 8 MiB ceiling)
   event-source.ts     pi.events subscription — the only OMP-specific seam
   index.ts            extension entry — wires everything, fail-open; auto-close scheduler
 viewer/               standalone terminal viewer (no LLM, no OMP, no tools)
-  session-stream.ts   read-side projection of the subagent's native session JSONL
+  session-stream.ts   chunked read-side projection of native session JSONL
+  stream.ts           chunked incremental tail; never reloads a full event log
   state.ts            bounded turn-structured display state
   render.ts           ANSI renderer
   index.ts            CLI: --session <id> --agent <id> [--session-file <path>]

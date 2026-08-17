@@ -72,19 +72,21 @@ Note: `currentTool`/`currentToolArgs` are not always populated; fall back to
 { "id": "DirectoryScout", "event": { "type": "agent_start" } }
 ```
 
-Observed event types: `agent_start`, `agent_end`, `turn_start`, `turn_end`,
-`message_start`, `message_update` (with `assistantMessageEvent`:
-`thinking_start`/`thinking_end`, `text_delta`, `toolcall_start`/`toolcall_delta`/
-`toolcall_end`), `message_end`, `tool_execution_start`, `tool_execution_end`.
-The same channel also carries subagent session-level events
-(`model_changed`, `auto_retry_*`, `todo_reminder`, …).
+Observed event types include `agent_start`, `agent_end`, `turn_start`,
+`turn_end`, message updates, `tool_execution_start`, and
+`tool_execution_end`. The normalizer observes this channel but persists only
+the compact tool execution signals needed for immediate tool display. Message
+deltas contain large partial-message payloads and are intentionally not copied
+to the extension JSONL; the native subagent session file remains the
+authoritative transcript.
 
 ## 3. What the extension consumes
 
 - `pi.events.on("task:subagent:lifecycle")` → registry + surface creation.
 - `pi.events.on("task:subagent:progress")` → running-state + tool display.
-- `pi.events.on("task:subagent:event")` → assistant text deltas, tool
-  execution, yield result, error extraction.
+- `pi.events.on("task:subagent:event")` → compact tool execution signals;
+  transcript text, tool arguments, and results come from the native session
+  file.
 
 Compatibility seam: `extension/event-source.ts` is the only module that
 mentions the channel names. If upstream renames or moves the channels, only
