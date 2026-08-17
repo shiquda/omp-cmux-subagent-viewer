@@ -45,9 +45,14 @@ function renderToolCall(turn: Turn, callIdx: number): string[] {
   }
   lines.push(header);
   if (call.intent) lines.push(`      ${DIM}${call.intent}${RESET}`);
-  // Tool output is intentionally omitted: the viewer shows what the agent is
-  // doing (tool name + args + intent), not the raw tool results. Assistant
-  // text (what the agent says) is rendered separately in renderTurn.
+  if (call.isError && call.result) {
+    for (const line of call.result.split("\n").slice(0, 6)) {
+      lines.push(`      ${RED}${line}${RESET}`);
+    }
+  }
+  // Tool output is intentionally omitted, except failures. A failed result is
+  // kept with its call so it leaves the viewport as later transcript entries arrive.
+  // Assistant text (what the agent says) is rendered separately in renderTurn.
   return lines;
 }
 
@@ -73,15 +78,15 @@ export function renderView(state: ViewerState): string {
   const lines: string[] = [];
   const status = STATUS_SYMBOL[state.status];
   const duration = formatDuration(state.startedAt, state.completedAt);
-
   lines.push(`${BOLD}${state.agentType}${RESET} ${DIM}· ${state.agentId}${RESET}`);
-  lines.push(`${statusColor(state.status)}${status} ${state.status}${RESET} ${DIM}· ${duration}${RESET}`);
-  if (state.model || state.thinkingLevel) {
-    const modelPart = state.model ? state.model : "";
-    const levelPart = state.thinkingLevel ? `thinking:${state.thinkingLevel}` : "";
-    const sep = modelPart && levelPart ? " · " : "";
-    lines.push(`${MAGENTA}${modelPart}${sep}${levelPart}${RESET}`);
-  }
+
+  const metadata = [
+    `${statusColor(state.status)}${status} ${state.status}${RESET}`,
+    `${DIM}· ${duration}${RESET}`,
+    state.model ? `${MAGENTA}${state.model}${RESET}` : "",
+    state.thinkingLevel ? `${MAGENTA}thinking:${state.thinkingLevel}${RESET}` : "",
+  ].filter(Boolean);
+  lines.push(metadata.join(" "));
   if (state.description) lines.push(`${DIM}${state.description}${RESET}`);
   lines.push("");
 
@@ -106,11 +111,6 @@ export function renderView(state: ViewerState): string {
     lines.push("");
   }
 
-  if (state.error) {
-    lines.push(`${RED}${BOLD}Error${RESET}`);
-    for (const line of state.error.split("\n").slice(0, 6)) lines.push(`  ${line}`);
-    lines.push("");
-  }
   if (state.finalResult) {
     lines.push(`${GREEN}${BOLD}Result${RESET}`);
     for (const line of state.finalResult.split("\n").slice(0, 12)) lines.push(`  ${line}`);

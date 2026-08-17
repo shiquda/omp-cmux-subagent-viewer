@@ -51,7 +51,6 @@ export interface ViewerState {
   /** current in-flight tool (latest unfinished tool call) */
   currentTool?: string;
   currentToolArgs?: string;
-  error?: string;
   finalResult?: string;
 }
 
@@ -275,7 +274,6 @@ export function applySessionMessage(state: ViewerState, message: DisplayMessage)
 
   if (message.role === "toolResult") {
     resolveToolCall(state, message);
-    if (message.isError && message.text) state.error = truncate(message.text, MAX_LINE_LENGTH * 4);
     // The hidden `yield` tool carries the subagent's final structured result.
     if (message.toolName === "yield" && message.text) {
       state.finalResult = truncate(message.text, MAX_LINE_LENGTH * 6);

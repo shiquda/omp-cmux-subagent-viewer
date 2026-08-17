@@ -92,9 +92,12 @@ async function main(): Promise<void> {
   const logPath = makeAgentLogPath(sessionRoot, args.agent);
 
   const state = createViewerState(args.agent, "subagent");
+  let dirty = true;
+  let lastFrame: string | undefined;
   // Extension stream: lifecycle/progress + raw session events (tool display).
   const stream = new ViewerStream(logPath, (event: NormalizedSubagentEvent) => {
     applyEvent(state, event);
+    dirty = true;
   }, args.pollMs);
 
   // Native transcript: tail the subagent's session file (standard OMP session
@@ -112,24 +115,30 @@ async function main(): Promise<void> {
     for (const message of result.messages) {
       applyEvent(state, sessionMessageToEvent(args.agent, message));
     }
+    if (result.reset || result.messages.length > 0) dirty = true;
   };
 
   stream.seed();
   readSession();
 
   const terminalStates = new Set(["completed", "failed", "aborted"]);
-  const render = () => {
-    process.stdout.write(renderClear(state));
+  const render = (force = false): void => {
+    if (!force && !dirty) return;
+    const frame = renderClear(state);
+    dirty = false;
+    if (!force && frame === lastFrame) return;
+    process.stdout.write(frame);
+    lastFrame = frame;
   };
 
   if (args.noLive) {
-    render();
+    render(true);
     stream.stop();
     process.exit(0);
   }
 
   stream.start();
-  render();
+  render(true);
 
   const timer = setInterval(() => {
     readSession();

@@ -7,6 +7,7 @@ import type { DisplayMessage } from "../viewer/session-stream";
 import { readSessionFileTail } from "../viewer/session-stream";
 import { applyEvent, applySessionMessage, createViewerState, formatDuration } from "../viewer/state";
 import { ViewerStream } from "../viewer/stream";
+import { renderView } from "../viewer/render";
 import type { NormalizedSubagentEvent } from "../extension/types";
 
 function sessionLine(entry: Record<string, unknown>): string {
@@ -156,12 +157,34 @@ describe("viewer state (turn reconstruction)", () => {
     expect(state.finalResult).toContain("done");
   });
 
-  test("tool error sets error", () => {
+  test("tool error remains in its historical tool call", () => {
     const state = createViewerState("A", "task");
     applySessionMessage(state, { role: "assistant", toolCalls: [{ id: "c1", name: "bash", args: {} }] });
     applySessionMessage(state, { role: "toolResult", toolName: "bash", text: "boom", isError: true });
-    expect(state.error).toBe("boom");
-    expect(state.turns[0].toolCalls[0].isError).toBe(true);
+    expect("error" in state).toBeFalse();
+    expect(state.turns[0].toolCalls[0]).toMatchObject({ isError: true, result: "boom" });
+    const view = renderView(state);
+    expect(view).toContain("boom");
+    expect(view).not.toContain("Error");
+    for (let index = 0; index < 12; index += 1) {
+      applySessionMessage(state, { role: "assistant", text: `later ${index}` });
+    }
+    expect(renderView(state)).not.toContain("boom");
+  });
+  test("header keeps subagent basics within two lines", () => {
+    const state = createViewerState("A", "scout");
+    state.startedAt = 0;
+    state.completedAt = 90_000;
+    state.model = "new-api/gpt-5.6";
+    state.thinkingLevel = "high";
+    state.status = "running";
+    const header = renderView(state).split("\n").slice(0, 2);
+    expect(header[0]).toContain("scout");
+    expect(header[0]).toContain("A");
+    expect(header[1]).toContain("running");
+    expect(header[1]).toContain("01:30");
+    expect(header[1]).toContain("new-api/gpt-5.6");
+    expect(header[1]).toContain("thinking:high");
   });
 
   test("current tool set on tool call, cleared on result", () => {
