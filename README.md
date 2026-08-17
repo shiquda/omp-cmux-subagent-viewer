@@ -2,6 +2,8 @@
 
 > Live CMUX surfaces for OMP native subagents — observability, never execution.
 
+<img width="1269" height="945" alt="2026-08-17_15-57-46" src="https://github.com/user-attachments/assets/4db080b0-0a15-4a1d-820b-0e341a075d90" />
+
 Watch [OMP](https://github.com/badlogic/oh-my-pi) native subagents (`task()`) run in real time, projected into CMUX surfaces — right-side splits (or a helper pane with tabs, legacy) — without spawning a second agent runtime and without touching task execution.
 
 ## Why
